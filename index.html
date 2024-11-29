@@ -32,43 +32,7 @@
     const canvas = document.getElementById("canvas1");
     const text_canvas = document.getElementById("canvas2");
 
-    function generateFourierCoeffs(numCoeffs, name) {
-      let coeffsString = `const Coeffs ${name}[NUM_COEFFS] = Coeffs[NUM_COEFFS](\n`;
-
-      const TAU = Math.PI * 2;
-      for (let i = 0; i < numCoeffs; i += 2) {
-        let p1 = (Math.random() * TAU).toFixed(3); // Random phase [0, 2π]
-        let p2 = (Math.random() * TAU).toFixed(3); // Random phase [0, 2π]
-        let speed = ((i + 2) / 2).toFixed(1);
-        let r1 = ((Math.random() * 2) / numCoeffs).toFixed(3);
-        let r2 = ((Math.random() * 2) / numCoeffs).toFixed(3);
-        coeffsString += `Coeffs(${p1}, ${speed}, 1., ${r1}),\n`;
-        coeffsString += `Coeffs(${p2}, ${speed}, -1., ${r2}),\n`;
-      }
-      coeffsString = coeffsString.substring(0, coeffsString.length - 2); // remove last comma and newline
-      coeffsString += `);`;
-
-      return coeffsString;
-    }
-
-    document.addEventListener("click", () => {
-      Inc = make_common(generateFourierCoeffs(NUM_COEFFS, "c1s"));
-    });
-
-    const glsl = SwissGL(canvas);
-
-    const NPOINTS = 1024;
-    const LAYERS = 16;
-    const NUM_COEFFS = 8;
-
-    const COEFFS1 = generateFourierCoeffs(NUM_COEFFS, "c1s");
-    console.log(COEFFS1);
-
-    function make_common(coeffs) {
-      return `
-        #define TAU 6.28318530718
-        #define NUM_COEFFS ${NUM_COEFFS}
-
+    const simplex = `
       //	Simplex 3D Noise
       //	by Ian McEwan, Stefan Gustavson (https://github.com/stegu/webgl-noise)
       //
@@ -143,6 +107,61 @@
         return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1),
                                       dot(p2,x2), dot(p3,x3) ) );
       }
+    `;
+
+    function generateFourierCoeffs(numCoeffs) {
+      let coeffs = [];
+
+      const TAU = Math.PI * 2;
+      for (let i = 0; i < numCoeffs; i += 2) {
+        let p1 = Math.random() * TAU; // Random phase [0, 2π]
+        let p2 = Math.random() * TAU; // Random phase [0, 2π]
+        let speed = (i + 2) / 2;
+        let r1 = (Math.random() * 2) / numCoeffs;
+        let r2 = (Math.random() * 2) / numCoeffs;
+        coeffs.push({ phase: p1, speed, direction: 1, radius: r1 });
+        coeffs.push({ phase: p2, speed, direction: -1, radius: r2 });
+      }
+      return coeffs;
+    }
+
+    function coeffs2code(coeffs, name) {
+      let coeffsString = `const Coeffs ${name}[${coeffs.length}] = Coeffs[${coeffs.length}](\n`;
+      for (let coeff of coeffs) {
+        let phase = coeff.phase.toFixed(3);
+        let speed = coeff.speed.toFixed(1);
+        let dir = coeff.direction.toFixed(1);
+        let rad = coeff.radius.toFixed(3);
+        coeffsString += `Coeffs(${phase}, ${speed}, ${dir}, ${rad}),\n`;
+      }
+      coeffsString = coeffsString.substring(0, coeffsString.length - 2); // remove last comma and newline
+      coeffsString += `);`;
+      return coeffsString;
+    }
+
+    document.addEventListener("click", () => {
+      coeffs = generateFourierCoeffs(NUM_COEFFS);
+      coeffs_code = coeffs2code(coeffs, "c1s");
+      Inc = make_common(coeffs_code);
+    });
+
+    const glsl = SwissGL(canvas);
+
+    const NPOINTS = 1024;
+    const LAYERS = 16;
+    const NUM_COEFFS = 8;
+
+    let coeffs = generateFourierCoeffs(NUM_COEFFS);
+    console.log(coeffs, coeffs.length);
+    let coeffs_code = coeffs2code(coeffs, "c1s");
+    console.log(coeffs_code);
+
+    function make_common(code) {
+      return `
+        #define TAU 6.28318530718
+        #define NUM_COEFFS ${NUM_COEFFS}
+
+         ${simplex}
 
         struct Coeffs {
             float  phase;  // Initial phase
@@ -151,7 +170,7 @@
             float radius;  // Radius of the circle
         };
 
-        ${coeffs}
+        ${code}
 
         vec2 fourier(float a, float t) {
             vec2 p = vec2(0,0); // Start at base position
@@ -168,22 +187,21 @@
         `;
     }
 
-    let Inc = make_common(COEFFS1); // changed on click
+    let Inc = make_common(coeffs_code); // changed on click
 
     glsl.loop(({ time }) => {
       glsl.adjustCanvas();
 
-      if (true) {
-        glsl({
-          Inc,
-          time,
-          slowdown: 20,
-          Aspect: "fit",
-          Grid: [NPOINTS, LAYERS],
-          Blend: "d*(1-sa)+s*sa",
-          Clear: 0.0,
-          lineWidth: 0.002, // Width of the edges
-          VP: `
+      glsl({
+        Inc,
+        time,
+        slowdown: 20,
+        Aspect: "fit",
+        Grid: [NPOINTS, LAYERS],
+        Blend: "d*(1-sa)+s*sa",
+        Clear: 0.0,
+        lineWidth: 0.002, // Width of the edges
+        VP: `
             // float slowdown = 20.;
             float lag = 0.05;
             varying float fade = pow(1. - float(ID.y) / float(Grid.y - 1), 4.);
@@ -198,62 +216,8 @@
             vec2 perp = vec2(-n.y, n.x); // Perpendicular vector
             VPos = vec4(mix(p1, p2, UV.x) + perp * lineWidth * XY.y, 0.0, 1.0);
           `,
-          FP: `vec4(1., 1., 1., fade)`,
-        });
-      }
-
-      if (false) {
-        glsl({
-          Inc,
-          time,
-          slowdown: 20,
-          Aspect: "fit",
-          Grid: [NPOINTS / 4, LAYERS],
-          Blend: "d*(1-sa)+s*sa",
-          // Clear: 0.0,
-          lineWidth: 0.0005, // Width of the edges
-          VP: `
-            // float slowdown = 20.;
-            float lag = 0.05;
-            varying float fade = pow(1. - float(ID.y) / float(Grid.y - 1), 4.);
-
-            float curr = float(ID.y);
-            float next = float(ID.y + 1);
-
-            float angle = TAU * float(ID.x) / float(Grid.x);
-            vec2 p1 = fourier(angle, time/slowdown - curr*lag);
-            vec2 p2 = fourier(angle, time/slowdown - next*lag);
-
-            vec2 n = normalize(p2 - p1);
-            vec2 perp = vec2(-n.y, n.x); // Perpendicular vector
-            VPos = vec4(mix(p1, p2, UV.x) + perp * lineWidth * XY.y, 0.0, 1.0);
-          `,
-          FP: `vec4(1., 1., 1., fade*.5)`,
-        });
-      }
-
-      if (false) {
-        glsl({
-          time,
-          Inc,
-          slowdown: 20,
-          Aspect: "fit",
-          Grid: [100, 1], // Adjust the grid size if needed
-          Blend: "d*(1-sa)+s*sa",
-          quad_scale: 0.01,
-          VP: `
-              float curr = TAU * float(ID.x) / float(Grid.x);
-              vec2 pos = fourier(curr, time/slowdown);
-              pos += XY * quad_scale; // Scale the size of each quad
-              VPos = vec4(pos, 0.0, 1.0);
-          `,
-          FP: `
-            float dist = length(XY);
-            float alpha = smoothstep(1.0, 0.99, dist);
-            FOut  = vec4( 0.8, 0.2, 0.2, alpha);
-          `,
-        });
-      }
+        FP: `vec4(1., 1., 1., fade)`,
+      });
     });
   </script>
 </body>
